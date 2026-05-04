@@ -206,6 +206,49 @@ if [ $COMMANDS_SETUP ]; then
         ln -snf "$NETWORK_SHARE_DIR/hf_hub" "$HOME/hf_hub"
     }
 
+    setshare() {
+        local base="$1"
+        if [ -z "$base" ]; then
+            echo "Usage: setshare <base_dir>  (e.g. setshare /mnt/nvme-data/engine)"
+            echo "Current network-share -> $(readlink -f "$HOME/network-share")"
+            echo "Current hf_hub        -> $(readlink -f "$HOME/hf_hub")"
+            return 1
+        fi
+
+        if [ ! -d "$base" ]; then
+            echo "Error: directory '$base' does not exist"
+            return 1
+        fi
+
+        # Update network-share symlink
+        local share_dir="$base/$USER"
+        if [ ! -d "$share_dir" ]; then
+            echo "Creating directory: $share_dir"
+            mkdir -p "$share_dir"
+        fi
+        ln -snf "$share_dir" "$HOME/network-share"
+        export NETWORK_SHARE_DIR="$share_dir"
+        echo "network-share -> $share_dir"
+
+        # Update hf_hub symlink: prefer shared hf_hub, fall back to personal
+        if [ -d "$base/hf_hub" ]; then
+            ln -snf "$base/hf_hub" "$HOME/hf_hub"
+            echo "hf_hub        -> $base/hf_hub"
+        elif [ -d "$base/hub_cache" ]; then
+            ln -snf "$base/hub_cache" "$HOME/hf_hub"
+            echo "hf_hub        -> $base/hub_cache"
+        else
+            local personal="$share_dir/hf_hub"
+            if [ ! -d "$personal" ]; then
+                mkdir -p "$personal"
+            fi
+            ln -snf "$personal" "$HOME/hf_hub"
+            echo "hf_hub        -> $personal (personal, no shared cache found)"
+        fi
+        export HF_HUB_DIR="$(readlink -f "$HOME/hf_hub")"
+        export SELF_HF_HUB="$share_dir/hf_hub"
+    }
+
     uva() {
         local env_path="$1"
         
