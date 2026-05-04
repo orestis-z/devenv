@@ -302,8 +302,9 @@ check_and_symlink "$REPOS/.vscode" "launch.json" "$TEMPLATE_LAUNCH"
 check_and_symlink "$HOME" ".tmux.conf" "$DEV_ENV_DIR/other_files/.tmux.conf"
 
 ### OTS REPOS ###
-if [ ! -d "$HOME/repos" ]; then
-    echo "repos directory not found. Running clone_repos..."
+if [ ! -d "$HOME/repos/llm-compressor" ] || [ ! -d "$HOME/repos/compressed-tensors" ] || \
+   [ ! -d "$HOME/repos/vllm" ] || [ ! -d "$HOME/repos/speculators" ]; then
+    echo "One or more repos not found. Running clone_repos..."
     clone_repos
     SETUP_CHANGED=1
 fi
