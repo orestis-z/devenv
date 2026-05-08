@@ -94,6 +94,54 @@ gcloud_setup() {
     gcloud auth application-default set-quota-project cloudability-it-gemini
 }
 
+configure_git_identity() {
+    # Pull name from GitHub if missing
+    if [ -z "$(git config --global user.name)" ]; then
+        if gh auth status &>/dev/null; then
+            local gh_name
+            gh_name="$(gh api user --jq '.name // .login' 2>/dev/null)"
+            if [ -n "$gh_name" ]; then
+                git config --global user.name "$gh_name"
+                echo "Git user.name configured from GitHub: $gh_name"
+            fi
+        else
+            echo "Warning: gh not authenticated, git user.name not set"
+        fi
+    fi
+
+    # Pull email from GitHub if missing
+    if [ -z "$(git config --global user.email)" ]; then
+        if gh auth status &>/dev/null; then
+            local gh_email
+            gh_email="$(gh api user/emails --jq '.[] | select(.primary) | .email' 2>/dev/null)"
+            if [ -n "$gh_email" ]; then
+                git config --global user.email "$gh_email"
+                echo "Git user.email configured from GitHub: $gh_email"
+            fi
+        else
+            echo "Warning: gh not authenticated, git user.email not set"
+        fi
+    fi
+
+    # Generate git commit template from base with Signed-off-by
+    local sob_name sob_email
+    sob_name="$(git config --global user.name)"
+    sob_email="$(git config --global user.email)"
+    local git_template="$DEV_ENV_DIR/.git-template"
+    local git_template_base="$DEV_ENV_DIR/.git-template.base"
+    if [ -n "$sob_name" ] && [ -n "$sob_email" ] && [ -f "$git_template_base" ]; then
+        local expected_sob="Signed-off-by: $sob_name <$sob_email>"
+        if ! grep -qF "$expected_sob" "$git_template" 2>/dev/null; then
+            cp "$git_template_base" "$git_template"
+            echo "" >> "$git_template"
+            echo "$expected_sob" >> "$git_template"
+            echo "Git commit template updated with your identity"
+        fi
+    elif [ ! -f "$git_template" ] && [ -f "$git_template_base" ]; then
+        cp "$git_template_base" "$git_template"
+    fi
+}
+
 finish_setup() {
     if [ ! -e "$HOME/.config/gcloud/application_default_credentials.json" ]; then
         gcloud_setup
@@ -101,6 +149,7 @@ finish_setup() {
     if ! command -v gh &>/dev/null || ! gh auth status &>/dev/null; then
         gh auth login
     fi
+    configure_git_identity
 }
 
 claude_setup() {
@@ -263,7 +312,7 @@ else
 fi
 
 NETWORK_SHARE_DIR="$NETWORK_SHARE_BASE/$USER"
-# make HDCharles if it doesn't already exist
+# make user dir if it doesn't already exist
 if [ ! -d "$NETWORK_SHARE_DIR" ]; then
     echo "Creating directory: $NETWORK_SHARE_DIR"
     mkdir "$NETWORK_SHARE_DIR"
@@ -328,14 +377,16 @@ if [ -f ~/.bashrc ]; then
 fi
 
 ### OTS GITCONFIG ###
-set_git_config_if_missing "user.name" "HDCharles" "Git user.name configured"
-set_git_config_if_missing "user.email" "charlesdavidhernandez@gmail.com" "Git user.email configured"
 set_git_credential_helper_if_missing "https://github.com" "!/usr/bin/gh auth git-credential" "GitHub credential helper configured"
 set_git_credential_helper_if_missing "https://gist.github.com" "!/usr/bin/gh auth git-credential" "Gist credential helper configured"
 set_git_config_if_missing "diff.tool" "vscode" "Git diff tool configured"
 set_git_config_if_missing "difftool.vscode.cmd" "code --wait --diff \$LOCAL \$REMOTE" "Git difftool.vscode.cmd configured"
+if [ ! -f "$DEV_ENV_DIR/.git-template" ] && [ -f "$DEV_ENV_DIR/.git-template.base" ]; then
+    cp "$DEV_ENV_DIR/.git-template.base" "$DEV_ENV_DIR/.git-template"
+fi
 set_git_config_if_missing "commit.template" "$DEV_ENV_DIR/.git-template" "Git commit template configured: $DEV_ENV_DIR/.git-template" "true"
 set_git_config_if_missing "safe.directory" "$DEV_ENV_DIR" "set devenv as a safe directory"
+
 
 ### OTS LAUNCH.JSON ###
 TEMPLATE_LAUNCH="$DEV_ENV_DIR/other_files/launch.json"

@@ -39,7 +39,7 @@ if [ $EXTERNAL_SETUPS ]; then
     safe_source "$DEV_ENV_DIR/.tmux" # setup secrets
     safe_source ~/rhdev/bin/activate # uv venv activate
     if [ -f ~/.fzf.bash ]; then # some devservers have fzf in usr/bin which takes precedence over this one
-        export PATH="/home/HDCharles/.fzf/bin:${PATH}"
+        export PATH="$HOME/.fzf/bin:${PATH}"
     fi
 fi
 ############ DIRS ############
@@ -177,7 +177,7 @@ if [ $COMMANDS_SETUP ]; then
     # Function to set VS Code window title prefix
     setwindow() {
         local new_prefix="$1"
-        local settings_file="/home/HDCharles/.vscode-server/data/Machine/settings.json"
+        local settings_file="$HOME/.vscode-server/data/Machine/settings.json"
 
         if [ -z "$new_prefix" ]; then
             echo "Usage: setwindow <prefix>"
@@ -224,7 +224,7 @@ if [ $COMMANDS_SETUP ]; then
     }
 
     running() {
-        ps aux | grep HDCharles 2>&1 | tee ~/running.log
+        ps aux | grep $USER 2>&1 | tee ~/running.log
         code ~/running.log
     }
 
