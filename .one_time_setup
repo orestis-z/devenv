@@ -66,6 +66,8 @@ rhdev_env_setup() {
     uv venv --python 3.11 rhdev
     . ~/rhdev/bin/activate
 
+    uv pip install transformers
+    uv pip install accelerate
     uv pip install isort
     uv pip install pytest
     uv pip install debugpy
