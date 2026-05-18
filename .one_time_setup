@@ -393,7 +393,7 @@ check_and_symlink "$HOME" ".tmux.conf" "$DEV_ENV_DIR/other_files/.tmux.conf"
 
 ### OTS REPOS ###
 if [ ! -d "$HOME/repos/llm-compressor" ] || [ ! -d "$HOME/repos/compressed-tensors" ] || \
-   [ ! -d "$HOME/repos/vllm" ] || [ ! -d "$HOME/repos/speculators" ]; then
+   [ ! -d "$HOME/repos/vllm" ] || [ ! -d "$HOME/repos/speculators" ] || [ ! -d "$HOME/repos/llm-compressor-testing" ]; then
     echo "One or more repos not found. Running clone_repos..."
     clone_repos
     SETUP_CHANGED=1
