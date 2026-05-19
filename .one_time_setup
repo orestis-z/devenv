@@ -100,11 +100,6 @@ gcloud_setup() {
 }
 
 configure_git_identity() {
-    if ! gh auth status &>/dev/null; then
-        NEEDS_MANUAL_SETUP=1
-        return 1
-    fi
-
     # Pull name from GitHub if missing
     if [ -z "$(git config --global user.name)" ]; then
         local gh_name
@@ -376,12 +371,21 @@ if [ -f ~/.bashrc ]; then
     fi
 fi
 
+### OTS GH AUTH FLAG ###
+GH_AUTHENTICATED=0
+if command -v gh &>/dev/null && gh auth status &>/dev/null; then
+    GH_AUTHENTICATED=1
+fi
+
 ### OTS GITCONFIG ###
-set_git_credential_helper_if_missing "https://github.com" "!/usr/bin/gh auth git-credential" "GitHub credential helper configured"
-set_git_credential_helper_if_missing "https://gist.github.com" "!/usr/bin/gh auth git-credential" "Gist credential helper configured"
+if [ $GH_AUTHENTICATED -eq 1 ]; then
+    set_git_credential_helper_if_missing "https://github.com" "!/usr/bin/gh auth git-credential" "GitHub credential helper configured"
+    set_git_credential_helper_if_missing "https://gist.github.com" "!/usr/bin/gh auth git-credential" "Gist credential helper configured"
+    configure_git_identity
+fi
 set_git_config_if_missing "diff.tool" "vscode" "Git diff tool configured"
 set_git_config_if_missing "difftool.vscode.cmd" "code --wait --diff \$LOCAL \$REMOTE" "Git difftool.vscode.cmd configured"
-configure_git_identity
+
 set_git_config_if_missing "commit.template" "$DEV_ENV_DIR/.git-template" "Git commit template configured: $DEV_ENV_DIR/.git-template" "true"
 set_git_config_if_missing "safe.directory" "$DEV_ENV_DIR" "set devenv as a safe directory"
 
@@ -400,13 +404,18 @@ MISSING_REPOS=()
 [ ! -d "$HOME/repos/compressed-tensors" ] && MISSING_REPOS+=("compressed-tensors")
 [ ! -d "$HOME/repos/vllm" ] && MISSING_REPOS+=("vllm")
 [ ! -d "$HOME/repos/speculators" ] && MISSING_REPOS+=("speculators")
-[ ! -d "$HOME/repos/llm-compressor-testing" ] && MISSING_REPOS+=("llm-compressor-testing")
+[ $GH_AUTHENTICATED -eq 1 ] && [ ! -d "$HOME/repos/llm-compressor-testing" ] && MISSING_REPOS+=("llm-compressor-testing")
 
 if [ ${#MISSING_REPOS[@]} -gt 0 ]; then
     echo "Missing repos: ${MISSING_REPOS[*]}"
-    echo "Running clone_repos to clone: llm-compressor, compressed-tensors, vllm, speculators"
+    echo "Running clone_repos..."
     clone_repos
-    SETUP_CHANGED=1
+    for repo in "${MISSING_REPOS[@]}"; do
+        if [ -d "$HOME/repos/$repo" ]; then
+            SETUP_CHANGED=1
+            break
+        fi
+    done
 fi
 
 ### OTS VLLM ENV ###
@@ -466,7 +475,7 @@ if [ ! -e "$HOME/.config/gcloud/application_default_credentials.json" ]; then
 fi
 
 ### OTS GH AUTH ###
-if ! command -v gh &>/dev/null || ! gh auth status &>/dev/null; then
+if [ $GH_AUTHENTICATED -eq 0 ]; then
     NEEDS_MANUAL_SETUP=1
 fi
 
