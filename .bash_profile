@@ -425,6 +425,7 @@ if [ $COMMANDS_SETUP ]; then
         refresh_repo_impl "vllm"
         refresh_repo_impl "compressed-tensors"
         refresh_repo_impl "speculators"
+        refresh_repo_impl "llm-compressor-testing"
         cd
         echo "repos updated, to install use \`env_install\`"
     }
