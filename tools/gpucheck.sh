@@ -11,6 +11,8 @@ POLL_INTERVAL=300  # seconds between checks (5 minutes)
 EMA_ALPHA_FAST=0.0024   # 1 day half-life
 EMA_ALPHA_MED=0.00034   # 7 day half-life (used for coloring)
 EMA_ALPHA_SLOW=0.000086 # 28 day half-life
+BASELINE_PING_HOST="8.8.8.8"
+BASELINE_PING_MS=""
 
 # === Get SSH username from gh auth ===
 load_ssh_user() {
@@ -144,6 +146,7 @@ update_state() {
     local host="$1"
     local gpus_used="$2"
     local total_gpus="$3"
+    local ping_ms="$4"
     local is_8=$([ "$gpus_used" -ge 8 ] && echo 1 || echo 0)
     local is_4=$([ "$gpus_used" -ge 4 ] && echo 1 || echo 0)
 
@@ -151,6 +154,7 @@ update_state() {
     jq --arg h "$host" \
        --argjson gpus "$gpus_used" \
        --argjson total "$total_gpus" \
+       --arg ping "$ping_ms" \
        --argjson is_8 "$is_8" \
        --argjson is_4 "$is_4" \
        --argjson af "$EMA_ALPHA_FAST" \
@@ -171,10 +175,22 @@ update_state() {
            samples: ((($old.samples) // 0) + 1),
            last_gpus_used: $gpus,
            last_total_gpus: $total,
+           last_ping_ms: ($ping | tonumber),
            last_seen: $ts,
            unreachable: false,
            unreachable_reason: null
        }' "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+}
+
+# === Baseline ping to 8.8.8.8 ===
+baseline_ping() {
+    local result
+    result=$(ping -c 1 -W 2000 "$BASELINE_PING_HOST" 2>/dev/null | grep 'time=')
+    if [ -n "$result" ]; then
+        BASELINE_PING_MS=$(echo "$result" | sed -n 's/.*time=\([0-9.]*\).*/\1/p')
+    else
+        BASELINE_PING_MS="timeout"
+    fi
 }
 
 # === Check a single host ===
@@ -183,6 +199,10 @@ check_host() {
     local hostname="$2"
     local user="$3"
     local tmpfile="$4"
+
+    local ping_result
+    ping_result=$(ping -c 1 -W 2000 "$hostname" 2>/dev/null | sed -n 's/.*time=\([0-9.]*\).*/\1/p')
+    local ping_ms="${ping_result:-0}"
 
     output=$(ssh -o ConnectTimeout=5 \
            -o ServerAliveInterval=5 \
@@ -197,10 +217,10 @@ check_host() {
         available_count=$(echo "$output" | grep -c "AVAILABLE")
         total_count=$(echo "$output" | grep -E "^ [0-9]+ " | wc -l | tr -d ' ')
         gpus_used=$((total_count - available_count))
-        echo "${host_alias}|${gpus_used}|${total_count}|${available_count}" > "$tmpfile"
+        echo "${host_alias}|${gpus_used}|${total_count}|${available_count}|${ping_ms}" > "$tmpfile"
     else
         reason=$(echo "$output" | tr '\n' ' ' | sed 's/|//g' | cut -c1-100)
-        echo "${host_alias}|UNREACHABLE|${reason}" > "$tmpfile"
+        echo "${host_alias}|UNREACHABLE|${reason}|${ping_ms}" > "$tmpfile"
     fi
 }
 
@@ -215,18 +235,21 @@ process_single_result() {
     host_alias=$(echo "$line" | cut -d'|' -f1)
 
     if ! echo "$line" | grep -q "UNREACHABLE"; then
-        local gpus_used total_count
+        local gpus_used total_count ping_ms
         gpus_used=$(echo "$line" | cut -d'|' -f2)
         total_count=$(echo "$line" | cut -d'|' -f3)
-        update_state "$host_alias" "$gpus_used" "$total_count"
+        ping_ms=$(echo "$line" | cut -d'|' -f5)
+        update_state "$host_alias" "$gpus_used" "$total_count" "$ping_ms"
     else
-        local reason
-        reason=$(echo "$line" | cut -d'|' -f3-)
+        local reason ping_ms
+        reason=$(echo "$line" | cut -d'|' -f3)
+        ping_ms=$(echo "$line" | cut -d'|' -f4)
         local tmp=$(mktemp)
         jq --arg h "$host_alias" \
            --arg ts "$(date -Iseconds)" \
            --arg reason "$reason" \
-           '.[$h].last_seen = $ts | .[$h].unreachable = true | .[$h].unreachable_reason = $reason' \
+           --arg ping "${ping_ms:-0}" \
+           '.[$h].last_seen = $ts | .[$h].unreachable = true | .[$h].unreachable_reason = $reason | .[$h].last_ping_ms = ($ping | tonumber)' \
            "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
     fi
 }
@@ -237,12 +260,12 @@ display_table_frame() {
     local col2_title="$2"
 
     if [ "$mode" = "header" ]; then
-        printf "┌──────────────────────────────┬──────────────────────┬────────────────────────┬────────────────────────┬────────────────────────┐\n"
-        printf "│ %-28s │ %-20s │ %-22s │ %-22s │ %-22s │\n" \
-            "Server" "$col2_title" "Avg Used (1d/7d/28d)" "% Time >=8" "% Time >=4"
-        printf "├──────────────────────────────┼──────────────────────┼────────────────────────┼────────────────────────┼────────────────────────┤\n"
+        printf "┌──────────────────────────────┬──────────────────────┬────────────┬────────────────────────┬────────────────────────┬────────────────────────┐\n"
+        printf "│ %-28s │ %-20s │ %-10s │ %-22s │ %-22s │ %-22s │\n" \
+            "Server" "$col2_title" "Ping" "Avg Used (1d/7d/28d)" "% Time >=8" "% Time >=4"
+        printf "├──────────────────────────────┼──────────────────────┼────────────┼────────────────────────┼────────────────────────┼────────────────────────┤\n"
     else
-        printf "└──────────────────────────────┴──────────────────────┴────────────────────────┴────────────────────────┴────────────────────────┘\n"
+        printf "└──────────────────────────────┴──────────────────────┴────────────┴────────────────────────┴────────────────────────┴────────────────────────┘\n"
         echo
         echo "Half-lives: 1 day / 7 days / 28 days  (at 5min polling interval)"
         echo
@@ -254,6 +277,7 @@ display_table_frame() {
         echo
         echo "Individual metric colors:"
         echo "  Avg Used: \033[0;32mGreen\033[0m <= 2, \033[0;33mYellow\033[0m > 2, \033[0;31mRed\033[0m > 4  |  Percentages: \033[0;32mGreen\033[0m <= 25%, \033[0;33mYellow\033[0m > 25%, \033[0;31mRed\033[0m > 50%"
+        echo "  Ping: \033[0;32mGreen\033[0m <= 200ms, \033[0;33mYellow\033[0m > 200ms, \033[0;31mRed\033[0m > 500ms"
         echo
     fi
 }
@@ -271,10 +295,18 @@ display_results() {
     fi
 
     clear
+    local ping_info=""
+    if [ -n "$BASELINE_PING_MS" ]; then
+        if [ "$BASELINE_PING_MS" = "timeout" ]; then
+            ping_info=" — baseline ping: \033[0;31mtimeout\033[0m"
+        else
+            ping_info=" — baseline ping ${BASELINE_PING_HOST}: \033[0;32m${BASELINE_PING_MS}ms\033[0m"
+        fi
+    fi
     if [ "$is_startup" -eq 1 ]; then
-        echo "GPU Monitor — Displaying saved state from $(date '+%Y-%m-%d %H:%M:%S')"
+        echo -e "GPU Monitor — Displaying saved state from $(date '+%Y-%m-%d %H:%M:%S')${ping_info}"
     else
-        echo "GPU Monitor — $(date '+%Y-%m-%d %H:%M:%S') — polling every ${POLL_INTERVAL}s"
+        echo -e "GPU Monitor — $(date '+%Y-%m-%d %H:%M:%S') — polling every ${POLL_INTERVAL}s${ping_info}"
     fi
     echo
     display_table_frame "header" "Current"
@@ -343,6 +375,15 @@ display_results() {
         (cnum($p4fv;25;50;$p4f) + "/" + cnum($p4mv;25;50;$p4m) + "/" + cnum($p4sv;25;50;$p4s) + "%") as $p4_col |
         (($p4f|length) + 1 + ($p4m|length) + 1 + ($p4s|length) + 1) as $p4_vl |
 
+        # Ping column
+        ((.last_ping_ms // 0)) as $ping |
+        (if $ping > 0 then (($ping | floor | tostring) + "ms") else "-" end) as $ping_str |
+        ($ping_str | length) as $ping_vl |
+        (if ._unreach then gry + $ping_str + rst
+         elif $ping > 500 then red + $ping_str + rst
+         elif $ping > 200 then ylw + $ping_str + rst
+         else grn + $ping_str + rst end) as $ping_col |
+
         # Server name color (based on 7d EMA)
         ((.last_total_gpus // 0) - (.last_gpus_used // 0)) as $avail |
         (if ._unreach or $avail == 0 then gry
@@ -368,6 +409,7 @@ display_results() {
 
         "│ " + $sc + $sname + rst +
         " │ " + $status +
+        " │ " + rpad($ping_col; $ping_vl; 10) +
         " │ " + rpad($avg_col; $avg_vl; 22) +
         " │ " + rpad($p8_col; $p8_vl; 22) +
         " │ " + rpad($p4_col; $p4_vl; 22) + " │"
@@ -411,6 +453,7 @@ main() {
 
     while true; do
         echo "🔍 Checking GPUs..."
+        baseline_ping
         HOSTS_LIST=$(get_ssh_hosts)
         WORK_TMPDIR=$(mktemp -d)
 
